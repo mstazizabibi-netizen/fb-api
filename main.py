@@ -37,7 +37,7 @@ def is_facebook_url(url: str) -> bool:
     return bool(re.match(fb_regex, url))
 
 def sanitize_filename(title: str) -> str:
-    # ফাইলের নামে যেন অবৈধ অক্ষর না থাকে
+    # ফাইলের নামে যেন অবৈধ বা বাংলা অক্ষরের সমস্যা না তৈরি করে
     clean = re.sub(r'[\\/*?:"<>|]', "", title)
     return clean.strip() or "Facebook_Video"
 
@@ -58,7 +58,7 @@ def get_size_from_url(url: str):
     except:
         return 0
 
-# ১. শুধুমাত্র ফেসবুকের ডেটা এবং ডাইরেক্ট লিঙ্ক পাওয়ার এন্ডপয়েন্ট
+# ১. শুধুমাত্র ফেসবুকের ভিডিও ইনফো পাওয়ার এন্ডপয়েন্ট
 @app.post("/api/extract")
 def extract_video_info(req: VideoRequest, request: Request):
     if not is_facebook_url(req.url):
@@ -98,7 +98,7 @@ def extract_video_info(req: VideoRequest, request: Request):
             if not audio_size and best_audio.get('url'):
                 audio_size = get_size_from_url(best_audio.get('url'))
 
-        # HD সাইজ (১০০০p/১০৮০p - অডিওসহ)
+        # HD সাইজ (1080p/720p+ - অডিওসহ)
         hd_formats = [f for f in formats if (f.get('height') or 0) >= 720]
         if hd_formats:
             best_hd = max(hd_formats, key=lambda x: x.get('height', 0))
@@ -147,16 +147,18 @@ def extract_video_info(req: VideoRequest, request: Request):
     except Exception as e:
         return {"code": 1, "msg": str(e)}
 
-# ২. 1080p HD ভিডিও মার্জ করে টাইটেল সহ সরাসরি ডাউনলোড
+# ২. 1080p HD ভিডিও মার্জ করে সরাসরি ডাউনলোড
 @app.get("/api/download_hd")
 def download_hd_video(url: str, background_tasks: BackgroundTasks):
     if not is_facebook_url(url):
         raise HTTPException(status_code=400, detail="Only Facebook links allowed")
 
-    temp_filename = f"temp_{uuid.uuid4().hex}"
+    unique_id = uuid.uuid4().hex
+    output_filepath = f"hd_{unique_id}.mp4"
+
     ydl_opts = {
         'format': 'bestvideo+bestaudio/best',
-        'outtmpl': f"{temp_filename}.%(ext)s",
+        'outtmpl': output_filepath,
         'merge_output_format': 'mp4',
         'quiet': True,
     }
@@ -167,30 +169,31 @@ def download_hd_video(url: str, background_tasks: BackgroundTasks):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             video_title = sanitize_filename(info.get('title', 'Facebook_1080p_Video'))
-            
-        filepath = f"{temp_filename}.mp4"
-        if os.path.exists(filepath):
-            background_tasks.add_task(delete_file, filepath)
+
+        if os.path.exists(output_filepath):
+            background_tasks.add_task(delete_file, output_filepath)
             return FileResponse(
-                filepath, 
-                media_type='application/octet-stream', 
+                path=output_filepath, 
+                media_type='video/mp4', 
                 filename=f"{video_title}.mp4"
             )
         else:
-            raise HTTPException(status_code=500, detail="HD Video processing failed")
+            raise HTTPException(status_code=500, detail="HD Video file processing failed")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ৩. 720p SD ভিডিও টাইটেল সহ সরাসরি ডাউনলোড
+# ৩. 720p SD ভিডিও সরাসরি ডাউনলোড
 @app.get("/api/download_sd")
 def download_sd_video(url: str, background_tasks: BackgroundTasks):
     if not is_facebook_url(url):
         raise HTTPException(status_code=400, detail="Only Facebook links allowed")
 
-    temp_filename = f"temp_{uuid.uuid4().hex}"
+    unique_id = uuid.uuid4().hex
+    output_filepath = f"sd_{unique_id}.mp4"
+
     ydl_opts = {
         'format': 'best[height<=720]/best',
-        'outtmpl': f"{temp_filename}.%(ext)s",
+        'outtmpl': output_filepath,
         'quiet': True,
     }
     if os.path.exists(COOKIES_PATH):
@@ -201,12 +204,11 @@ def download_sd_video(url: str, background_tasks: BackgroundTasks):
             info = ydl.extract_info(url, download=True)
             video_title = sanitize_filename(info.get('title', 'Facebook_720p_Video'))
 
-        filepath = f"{temp_filename}.mp4"
-        if os.path.exists(filepath):
-            background_tasks.add_task(delete_file, filepath)
+        if os.path.exists(output_filepath):
+            background_tasks.add_task(delete_file, output_filepath)
             return FileResponse(
-                filepath, 
-                media_type='application/octet-stream', 
+                path=output_filepath, 
+                media_type='video/mp4', 
                 filename=f"{video_title}.mp4"
             )
         else:
@@ -214,16 +216,19 @@ def download_sd_video(url: str, background_tasks: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ৪. MP3 Audio টাইটেল সহ সরাসরি ডাউনলোড
+# ৪. MP3 Audio কনভার্ট করে সরাসরি ডাউনলোড
 @app.get("/api/download_audio")
 def download_audio_only(url: str, background_tasks: BackgroundTasks):
     if not is_facebook_url(url):
         raise HTTPException(status_code=400, detail="Only Facebook links allowed")
 
-    temp_filename = f"temp_{uuid.uuid4().hex}"
+    unique_id = uuid.uuid4().hex
+    temp_filepath = f"audio_{unique_id}"
+    final_mp3_path = f"{temp_filepath}.mp3"
+
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': f"{temp_filename}.%(ext)s",
+        'outtmpl': temp_filepath,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -239,12 +244,11 @@ def download_audio_only(url: str, background_tasks: BackgroundTasks):
             info = ydl.extract_info(url, download=True)
             audio_title = sanitize_filename(info.get('title', 'Facebook_Audio'))
 
-        filepath = f"{temp_filename}.mp3"
-        if os.path.exists(filepath):
-            background_tasks.add_task(delete_file, filepath)
+        if os.path.exists(final_mp3_path):
+            background_tasks.add_task(delete_file, final_mp3_path)
             return FileResponse(
-                filepath, 
-                media_type='application/octet-stream', 
+                path=final_mp3_path, 
+                media_type='audio/mpeg', 
                 filename=f"{audio_title}.mp3"
             )
         else:
