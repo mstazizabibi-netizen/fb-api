@@ -37,7 +37,7 @@ def is_facebook_url(url: str) -> bool:
     return bool(re.match(fb_regex, url))
 
 def sanitize_filename(title: str) -> str:
-    # ফাইলের নামে যেন অবৈধ বা বাংলা অক্ষরের সমস্যা না তৈরি করে
+    # Ensure no illegal characters cause issues with file saving
     clean = re.sub(r'[\\/*?:"<>|]', "", title)
     return clean.strip() or "Facebook_Video"
 
@@ -58,7 +58,7 @@ def get_size_from_url(url: str):
     except:
         return 0
 
-# ১. শুধুমাত্র ফেসবুকের ভিডিও ইনফো পাওয়ার এন্ডপয়েন্ট
+# 1. Endpoint to extract video information
 @app.post("/api/extract")
 def extract_video_info(req: VideoRequest, request: Request):
     if not is_facebook_url(req.url):
@@ -85,7 +85,7 @@ def extract_video_info(req: VideoRequest, request: Request):
         sd_size = 0
         audio_size = 0
 
-        # অডিও সাইজ
+        # Audio Size Calculation
         best_audio = max(
             [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none'],
             key=lambda x: x.get('abr') or 0,
@@ -98,7 +98,7 @@ def extract_video_info(req: VideoRequest, request: Request):
             if not audio_size and best_audio.get('url'):
                 audio_size = get_size_from_url(best_audio.get('url'))
 
-        # HD সাইজ (1080p/720p+ - অডিওসহ)
+        # HD Size Calculation (1080p/720p+ - including audio)
         hd_formats = [f for f in formats if (f.get('height') or 0) >= 720]
         if hd_formats:
             best_hd = max(hd_formats, key=lambda x: x.get('height', 0))
@@ -115,7 +115,7 @@ def extract_video_info(req: VideoRequest, request: Request):
         else:
             total_hd_size = 0
 
-        # SD সাইজ (720p)
+        # SD Size Calculation (<= 720p)
         sd_formats = [f for f in formats if f.get('height') and f.get('height') <= 720 and f.get('acodec') != 'none']
         if sd_formats:
             best_sd = max(sd_formats, key=lambda x: x.get('height', 0))
@@ -133,13 +133,10 @@ def extract_video_info(req: VideoRequest, request: Request):
             "data": {
                 "title": title,
                 "cover": info.get('thumbnail', 'https://placehold.co/400x400?text=Facebook+Video'),
-                
                 "play": f"{base_url}/api/download_hd?url={req.url}", 
                 "hd_label": "DOWNLOAD 1080p HD VIDEO" + get_mb(total_hd_size),
-                
                 "wmplay": f"{base_url}/api/download_sd?url={req.url}",
                 "sd_label": "DOWNLOAD 720p SD VIDEO" + get_mb(sd_size),
-                
                 "music": f"{base_url}/api/download_audio?url={req.url}",
                 "music_label": "DOWNLOAD MP3 AUDIO" + get_mb(audio_size),
             }
@@ -147,7 +144,7 @@ def extract_video_info(req: VideoRequest, request: Request):
     except Exception as e:
         return {"code": 1, "msg": str(e)}
 
-# ২. 1080p HD ভিডিও মার্জ করে সরাসরি ডাউনলোড
+# 2. Download and merge 1080p HD video
 @app.get("/api/download_hd")
 def download_hd_video(url: str, background_tasks: BackgroundTasks):
     if not is_facebook_url(url):
@@ -182,7 +179,7 @@ def download_hd_video(url: str, background_tasks: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ৩. 720p SD ভিডিও সরাসরি ডাউনলোড
+# 3. Download 720p SD video directly
 @app.get("/api/download_sd")
 def download_sd_video(url: str, background_tasks: BackgroundTasks):
     if not is_facebook_url(url):
@@ -216,7 +213,7 @@ def download_sd_video(url: str, background_tasks: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ৪. MP3 Audio কনভার্ট করে সরাসরি ডাউনলোড
+# 4. Convert and download MP3 Audio
 @app.get("/api/download_audio")
 def download_audio_only(url: str, background_tasks: BackgroundTasks):
     if not is_facebook_url(url):
