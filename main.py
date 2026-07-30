@@ -1,8 +1,6 @@
 import os
 import uuid
 import urllib.request
-import re
-import urllib.parse
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -100,16 +98,6 @@ def extract_video_info(req: VideoRequest, request: Request):
 
         total_hd_size = hd_video_size + audio_size
 
-        # --- নতুন যোগ করা অংশ (ফাইলের নাম ঠিক করার জন্য) ---
-        raw_title = info.get('title', 'Facebook_Video')
-        clean_title = re.sub(r'[\\/*?:"<>|]', "", raw_title).strip()
-        if not clean_title:
-            clean_title = "Facebook_Video"
-        
-        encoded_title = urllib.parse.quote(clean_title)
-        encoded_url = urllib.parse.quote(req.url)
-        # --------------------------------------------------
-
         return {
             "code": 0,
             "msg": "success",
@@ -117,13 +105,13 @@ def extract_video_info(req: VideoRequest, request: Request):
                 "title": info.get('title', 'Facebook Video'),
                 "cover": info.get('thumbnail', 'https://placehold.co/400x400?text=Facebook+Video'),
                 
-                "play": f"{base_url}/api/download_hd?url={encoded_url}&title={encoded_title}_HD", 
+                "play": f"{base_url}/api/download_hd?url={req.url}", 
                 "hd_label": "DOWNLOAD HD VIDEO" + get_mb(total_hd_size),
                 
-                "wmplay": f"{base_url}/api/download_sd?url={encoded_url}&title={encoded_title}_SD",
+                "wmplay": f"{base_url}/api/download_sd?url={req.url}",
                 "sd_label": "DOWNLOAD SD VIDEO" + get_mb(sd_size),
                 
-                "music": f"{base_url}/api/download_audio?url={encoded_url}&title={encoded_title}_Audio",
+                "music": f"{base_url}/api/download_audio?url={req.url}",
                 "music_label": "DOWNLOAD AUDIO ONLY" + get_mb(audio_size),
             }
         }
@@ -132,7 +120,7 @@ def extract_video_info(req: VideoRequest, request: Request):
 
 # ২. HD ভিডিও মার্জ করে ইউজারকে দেওয়ার এন্ডপয়েন্ট
 @app.get("/api/download_hd")
-def download_hd_video(url: str, background_tasks: BackgroundTasks, title: str = "Facebook_1080p_Video"):
+def download_hd_video(url: str, background_tasks: BackgroundTasks):
     filename = f"HD_Video_{uuid.uuid4().hex}.mp4"
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -146,8 +134,7 @@ def download_hd_video(url: str, background_tasks: BackgroundTasks, title: str = 
             
         if os.path.exists(filename):
             background_tasks.add_task(delete_file, filename)
-            # এখানে filename এ title বসানো হয়েছে
-            return FileResponse(filename, media_type='video/mp4', filename=f"{title}.mp4")
+            return FileResponse(filename, media_type='video/mp4', filename="Facebook_1080p_Video.mp4")
         else:
             raise HTTPException(status_code=500, detail="Failed to merge HD video")
     except Exception as e:
@@ -155,7 +142,7 @@ def download_hd_video(url: str, background_tasks: BackgroundTasks, title: str = 
 
 # ৩. SD ভিডিও ডাউনলোড করার এন্ডপয়েন্ট
 @app.get("/api/download_sd")
-def download_sd_video(url: str, background_tasks: BackgroundTasks, title: str = "Facebook_720p_Video"):
+def download_sd_video(url: str, background_tasks: BackgroundTasks):
     filename = f"SD_Video_{uuid.uuid4().hex}.mp4"
     ydl_opts = {
         'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
@@ -168,8 +155,7 @@ def download_sd_video(url: str, background_tasks: BackgroundTasks, title: str = 
             
         if os.path.exists(filename):
             background_tasks.add_task(delete_file, filename)
-            # এখানে filename এ title বসানো হয়েছে
-            return FileResponse(filename, media_type='video/mp4', filename=f"{title}.mp4")
+            return FileResponse(filename, media_type='video/mp4', filename="Facebook_720p_Video.mp4")
         else:
             raise HTTPException(status_code=500, detail="Failed to download SD video")
     except Exception as e:
@@ -177,7 +163,7 @@ def download_sd_video(url: str, background_tasks: BackgroundTasks, title: str = 
 
 # ৪. শুধুমাত্র অডিও ডাউনলোড করার এন্ডপয়েন্ট
 @app.get("/api/download_audio")
-def download_audio_only(url: str, background_tasks: BackgroundTasks, title: str = "Facebook_Audio"):
+def download_audio_only(url: str, background_tasks: BackgroundTasks):
     filename = f"Audio_{uuid.uuid4().hex}.m4a"
     ydl_opts = {
         'format': 'bestaudio[ext=m4a]/bestaudio/best',
@@ -190,8 +176,7 @@ def download_audio_only(url: str, background_tasks: BackgroundTasks, title: str 
             
         if os.path.exists(filename):
             background_tasks.add_task(delete_file, filename)
-            # এখানে filename এ title বসানো হয়েছে
-            return FileResponse(filename, media_type='audio/mp4', filename=f"{title}.m4a")
+            return FileResponse(filename, media_type='audio/mp4', filename="Facebook_Audio.m4a")
         else:
             raise HTTPException(status_code=500, detail="Failed to download audio")
     except Exception as e:
