@@ -1,13 +1,14 @@
 import os
 import re
 import uuid
-from fastapi import FastAPI, HTTPException
+import shutil
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import yt_dlp
 
-app = FastAPI(title="Facebook Video Downloader API")
+app = FastAPI(title="Facebook Downloader API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DOWNLOAD_DIR = "downloads"
+DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 class ExtractRequest(BaseModel):
@@ -25,13 +26,20 @@ class ExtractRequest(BaseModel):
 
 def clean_filename(title: str) -> str:
     cleaned = re.sub(r'[\\/*?:"<>|]', "", title)
-    return cleaned.strip()[:80]
+    return cleaned.strip()[:50]
+
+def cleanup_file(filepath: str):
+    """ডাউনলোড শেষ হলে ফাইল ডিলিট করার ব্যাকগ্রাউন্ড টাস্ক"""
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
 
 @app.get("/")
 def home():
-    return {"status": "success", "message": "Facebook Video Downloader API is Running"}
+    return {"status": "success", "message": "API is online"}
 
-# ১. index.php যে ডাটা চাচ্ছে সেই ফরম্যাটে JSON রেসপন্স তৈরি করা
 @app.post("/api/extract")
 def extract_fb_video(data: ExtractRequest):
     url = data.url
@@ -45,13 +53,11 @@ def extract_fb_video(data: ExtractRequest):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            
             title = info.get('title', 'Facebook Video')
-            thumbnail = info.get('thumbnail', 'https://via.placeholder.com/300x400.png?text=Facebook+Video')
+            thumbnail = info.get('thumbnail', '')
             safe_title = clean_filename(title)
-            file_id = str(uuid.uuid4())[:8]
+            file_id = str(uuid.uuid4())[:6]
 
-            # index.php এর JavaScript যে কি (key) গুলো খুঁজছে ঠিক সেগুলোই পাঠানো হচ্ছে
             return {
                 "status": "success",
                 "title": title,
@@ -67,53 +73,59 @@ def extract_fb_video(data: ExtractRequest):
                     "audio_mp3": f"/get-file?url={url}&quality=mp3&name={safe_title}&id={file_id}"
                 }
             }
-
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# ২. আসল ফাইল মার্জ ও ডাউনলোড করার রুট (FFmpeg System)
 @app.get("/get-file")
-def get_file(url: str, quality: str, name: str, id: str):
+def get_file(url: str, quality: str, name: str, id: str, background_tasks: BackgroundTasks):
     try:
+        # ফাইল নাম ঠিক রাখা
         if quality == "mp3":
             filename = f"{name}_{id}.mp3"
-            filepath = os.path.join(DOWNLOAD_DIR, filename)
-            ydl_opts = {
-                'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-                'outtmpl': filepath,
+        elif quality == "720p":
+            filename = f"{name}_{id}_720p.mp4"
+        else:
+            filename = f"{name}_{id}_1080p.mp4"
+
+        filepath = os.path.join(DOWNLOAD_DIR, filename)
+
+        # Config for yt-dlp
+        ydl_opts = {
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            'outtmpl': filepath,
+            'quiet': True,
+            'no_warnings': True,
+        }
+
+        if quality == "mp3":
+            ydl_opts.update({
                 'format': 'bestaudio/best',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
-                    'preferredquality': '192',
+                    'preferredquality': '128', # মেমোরি চাপ কমাতে ১২৮ কেবিপিএস
                 }],
-            }
+            })
         elif quality == "720p":
-            filename = f"{name}_{id}_720p.mp4"
-            filepath = os.path.join(DOWNLOAD_DIR, filename)
-            ydl_opts = {
-                'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-                'outtmpl': filepath,
+            ydl_opts.update({
                 'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
                 'merge_output_format': 'mp4',
-            }
-        else: # 1080p HD
-            filename = f"{name}_{id}_1080p.mp4"
-            filepath = os.path.join(DOWNLOAD_DIR, filename)
-            ydl_opts = {
-                'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-                'outtmpl': filepath,
+            })
+        else: # 1080p
+            ydl_opts.update({
                 'format': 'bestvideo[height>=1080]+bestaudio/bestvideo+bestaudio/best',
                 'merge_output_format': 'mp4',
-            }
+            })
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
         if os.path.exists(filepath):
+            # ফাইল ইউজারকে পাঠানোর পর ব্যাকগ্রাউন্ডে মুছে ফেলার ব্যবস্থা (Memory/Disk Full ক্র্যাশ আটকাবে)
+            background_tasks.add_task(cleanup_file, filepath)
             return FileResponse(filepath, filename=filename, media_type="application/octet-stream")
         else:
-            raise HTTPException(status_code=500, detail="File processing failed.")
+            raise HTTPException(status_code=500, detail="Processing failed")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
