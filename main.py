@@ -31,7 +31,7 @@ def clean_filename(title: str) -> str:
 def home():
     return {"status": "success", "message": "Facebook Video Downloader API is Running"}
 
-# ১. ওয়েবসাইট থেকে লিংক প্রসেস করার জন্য (POST Request)
+# ১. index.php যে ডাটা চাচ্ছে সেই ফরম্যাটে JSON রেসপন্স তৈরি করা
 @app.post("/api/extract")
 def extract_fb_video(data: ExtractRequest):
     url = data.url
@@ -47,27 +47,31 @@ def extract_fb_video(data: ExtractRequest):
             info = ydl.extract_info(url, download=False)
             
             title = info.get('title', 'Facebook Video')
+            thumbnail = info.get('thumbnail', 'https://via.placeholder.com/300x400.png?text=Facebook+Video')
             safe_title = clean_filename(title)
-            
-            # ৩টি আলাদা ফাইলের জন্য ইউনিক আইডি দেওয়া যেন টাইটেল মিলে গেলেও ওভাররাইট না হয়
             file_id = str(uuid.uuid4())[:8]
 
-            # ৩টি কোয়ালিটির লিংক তৈরি (যা ইউজারদের জন্য প্রসেস হবে)
+            # index.php এর JavaScript যে কি (key) গুলো খুঁজছে ঠিক সেগুলোই পাঠানো হচ্ছে
             return {
-                "code": 0,
-                "msg": "Success",
+                "status": "success",
                 "title": title,
+                "thumbnail": thumbnail,
+                "button_labels": {
+                    "1080p_hd": "Download 1080p HD Video",
+                    "sd": "Download 720p SD Video",
+                    "audio_mp3": "Download Audio Only (MP3)"
+                },
                 "links": {
-                    "1080p": f"/get-file?url={url}&quality=1080p&name={safe_title}&id={file_id}",
-                    "720p": f"/get-file?url={url}&quality=720p&name={safe_title}&id={file_id}",
-                    "mp3": f"/get-file?url={url}&quality=mp3&name={safe_title}&id={file_id}"
+                    "1080p_hd": f"/get-file?url={url}&quality=1080p&name={safe_title}&id={file_id}",
+                    "sd": f"/get-file?url={url}&quality=720p&name={safe_title}&id={file_id}",
+                    "audio_mp3": f"/get-file?url={url}&quality=mp3&name={safe_title}&id={file_id}"
                 }
             }
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# ২. আসল ফাইল ডাউনলোড ও মার্জ করার রুট
+# ২. আসল ফাইল মার্জ ও ডাউনলোড করার রুট (FFmpeg System)
 @app.get("/get-file")
 def get_file(url: str, quality: str, name: str, id: str):
     try:
@@ -93,7 +97,7 @@ def get_file(url: str, quality: str, name: str, id: str):
                 'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
                 'merge_output_format': 'mp4',
             }
-        else: # 1080p
+        else: # 1080p HD
             filename = f"{name}_{id}_1080p.mp4"
             filepath = os.path.join(DOWNLOAD_DIR, filename)
             ydl_opts = {
