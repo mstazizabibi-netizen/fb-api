@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# FFmpeg সহ প্রয়োজনীয় ডিপেনডেন্সি ইনস্টল
+# Install FFmpeg
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -14,5 +14,5 @@ COPY . .
 
 EXPOSE 8000
 
-# Worker কমানো হয়েছে যেন RAM ফুল হয়ে Crash না করে
-CMD ["uvicorn", "main:py", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# main:app দিতে হবে (main.py:app নয়)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
